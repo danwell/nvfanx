@@ -1,0 +1,13 @@
+[Unit]
+Description=Manage nVidia GPU Fan Power based on GPU temperatures
+After=display-manager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/nvfanx
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=graphical.target 
+

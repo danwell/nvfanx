@@ -1,0 +1,30 @@
+nvfanx
+Manages nVidia GPU Fan Power based on GPU temperatures
+By David Newell
+
+This Python script is designed to manage fan speeds on a *nix system with the
+nVidia GPU driver installed. Currently, the nVidia controller maintains fan
+speed only at around 30%. This script manually controls the fans using
+nvidia-settings to adjust the fan speed on a sliding scale from 30% to 90% and
+100% if the temperature exceeds 90'c. The script currently has support for only
+one GPU.
+
+There is one important limitation. The nVidia GPUs cannot be controlled unless
+there is an active X session. This script will attempt to reactive and manage
+fan control on display :0 and will continue running even if this X session
+restarts (on systems with graphical login managers, for example).
+
+This script uses the subprocess module and therefore requires Python 3 to run.
+
+A systemd service is included, allowing systemd users to automatically start
+the script on a graphical boot.
+
+nouveau users should use nvclock instead, which does not depend on an X
+session.
+
+To install the script with a systemd service:
+	$ make systemd-install
+	
+To uninstall the systemd service and the script:
+	$ make systemd-uninstall
+

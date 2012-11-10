@@ -1,0 +1,138 @@
+#!/usr/bin/python3
+
+#    nvfanx - nVidia GPU fan control Daemon
+#    Copyright (C) 2012 David Newell
+
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; either version 2 of the License, or
+#    (at your option) any later version.
+
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+#    GNU General Public License for more details.
+
+#    You should have received a copy of the GNU General Public License along
+#    with this program; if not, write to the Free Software Foundation, Inc.,
+#    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+import os
+import sys
+
+if not os.geteuid() == 0:
+	sys.exit("You need to be root to run this script\n")
+
+import subprocess
+import time
+import signal
+
+def onSIGTERM(signum, frame):
+	sys.stdout.write("Recieved SIGTERM, exiting...\n")
+	sys.stdout.flush()
+	sys.stderr.flush()
+	exit(0)
+
+signal.signal(signal.SIGTERM, onSIGTERM)
+
+###############################################################################
+## GPU FAN CONTROL GET/SET FUNCTIONS
+###############################################################################
+
+def getGPUFanControlEnabled():
+	nvproc = subprocess.Popen(("nvidia-settings", "--ctrl-display", ":0", "-q", "[gpu:0]/GPUFanControlState", "-t"),stdout=subprocess.PIPE)
+	output = nvproc.stdout.readline()
+	nvproc.wait()
+	if nvproc.returncode != 0:
+		raise Exception('Failed to obtain GPU Fan Control Enabled value')
+	isEnabled = int(output)
+	return isEnabled
+
+def enableGPUFanControl():
+	nvproc = subprocess.Popen(("nvidia-settings", "--ctrl-display", ":0", "-a", "[gpu:0]/GPUFanControlState=1"))
+	nvproc.wait()
+	return nvproc.returncode == 0
+
+## TODO: Add multi-GPU support
+def getTemperature():
+	nvproc = subprocess.Popen(("nvidia-settings", "--ctrl-display", ":0", "-q", "[gpu:0]/GPUCoreTemp", "-t"),stdout=subprocess.PIPE)
+	
+	line = nvproc.stdout.readline()
+
+	nvproc.wait()
+	if nvproc.returncode != 0:
+		raise Exception('Failed to obtain temperature value\n')
+	temp = int(line)
+	return temp
+	
+###############################################################################
+## MAIN ROUTINE
+###############################################################################
+
+# TODO: Single instance support
+
+# nVidia driver throttles min speed to 30
+FANSPEED_MIN = 30
+FANSPEED_MAX = 90
+FANSPEED_DELTA = FANSPEED_MAX - FANSPEED_MIN
+TEMPERATURE_MIN = 60
+TEMPERATURE_MAX = 90
+TEMPERATURE_DELTA = TEMPERATURE_MAX - TEMPERATURE_MIN
+
+# For safety, assume we're overheating
+temperature = 100
+fanspeed = 100
+
+MAX_ATTEMPTS = 3
+attempts = 0
+
+firstrun = 1
+
+while True:
+	sys.stdout.flush()
+	sys.stderr.flush()
+	
+	if (attempts > MAX_ATTEMPTS):
+		sys.stderr.write("GPU fan control appears to be dead, giving up.\n")
+		sys.stdout.flush()
+		sys.stderr.flush()
+		sys.exit(1)
+	
+	if not firstrun:
+		time.sleep(5)
+	else:
+		firstrun = 0
+	attempts = attempts + 1
+	
+	try:
+		temp = getTemperature()
+	except:
+		sys.stderr.write("Failed to get temperature value, attempt %i of %i\n" % (attempts, MAX_ATTEMPTS))
+		continue
+
+	## What should we set the fanspeed to?
+	if temp < TEMPERATURE_MIN:
+		fanspeed = FANSPEED_MIN
+	elif temp > TEMPERATURE_MAX:
+		fanspeed = FANSPEED_MAX
+	else:
+		fanspeed = round((FANSPEED_MIN + (FANSPEED_DELTA *(temp - TEMPERATURE_MIN) / TEMPERATURE_DELTA)))
+
+	## Attempt to enable GPU Fan Control
+	try:
+		if not getGPUFanControlEnabled():
+			enableGPUFanControl()
+	except:
+		sys.stderr.write("Failed to set GPU fan control state, attempt %i of %i\n" % (attempts, MAX_ATTEMPTS))
+		continue
+	
+	nvproc = subprocess.Popen(("nvidia-settings", "--ctrl-display", ":0", "-a", "[fan:0]/GPUCurrentFanSpeed=" + str(fanspeed)),stdout=subprocess.PIPE)
+	nvproc.wait()
+	if nvproc.returncode != 0:
+		sys.stdout.write("Failed to set temperature value, attempt %i of %i\n" % (attempts, MAX_ATTEMPTS))
+		continue
+	
+	## We were successful. Reset the attempt count
+	sys.stdout.write("Temp: %i -> Fan Speed: %i\n" % (temp, fanspeed))
+	attempts = 0
+	
