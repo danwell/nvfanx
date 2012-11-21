@@ -64,7 +64,15 @@ def getTemperature():
 		raise Exception('Failed to obtain temperature value\n')
 	temp = int(line)
 	return temp
-	
+
+## Returns nvidia-settings return code - non-zero indicates failure
+def setGPUFanSpeed(fanspeed):
+	if fanspeed > 100 or fanspeed < 0:
+		raise Exception('Invalid fanspeed: %i' % fanspeed)
+	nvproc = subprocess.Popen(("nvidia-settings", "--ctrl-display", ":0", "-a", "[fan:0]/GPUCurrentFanSpeed=" + str(fanspeed)),stdout=subprocess.PIPE)
+	nvproc.wait()
+	return nvproc.returncode	
+			
 ###############################################################################
 ## MAIN ROUTINE
 ###############################################################################
@@ -164,9 +172,8 @@ while True:
 		sys.stderr.write("Failed to set GPU fan control state, attempt %i of %i\n" % (attempts, MAX_ATTEMPTS))
 		continue
 	
-	nvproc = subprocess.Popen(("nvidia-settings", "--ctrl-display", ":0", "-a", "[fan:0]/GPUCurrentFanSpeed=" + str(fanspeed)),stdout=subprocess.PIPE)
-	nvproc.wait()
-	if nvproc.returncode != 0:
+	## Set new fanspeed
+	if setGPUFanSpeed(fanspeed) != 0:
 		sys.stdout.write("Failed to set temperature value, attempt %i of %i\n" % (attempts, MAX_ATTEMPTS))
 		continue
 	
