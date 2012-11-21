@@ -19,21 +19,9 @@
 
 import os
 import sys
-
-if not os.geteuid() == 0:
-	sys.exit("You need to be root to run this script\n")
-
 import subprocess
 import time
 import signal
-
-def onSIGTERM(signum, frame):
-	sys.stdout.write("Recieved SIGTERM, exiting...\n")
-	sys.stdout.flush()
-	sys.stderr.flush()
-	exit(0)
-
-signal.signal(signal.SIGTERM, onSIGTERM)
 
 ###############################################################################
 ## GPU FAN CONTROL GET/SET FUNCTIONS
@@ -71,14 +59,12 @@ def setGPUFanSpeed(fanspeed):
 		raise Exception('Invalid fanspeed: %i' % fanspeed)
 	nvproc = subprocess.Popen(("nvidia-settings", "--ctrl-display", ":0", "-a", "[fan:0]/GPUCurrentFanSpeed=" + str(fanspeed)),stdout=subprocess.PIPE)
 	nvproc.wait()
-	return nvproc.returncode	
-			
+	return nvproc.returncode
+	
 ###############################################################################
-## MAIN ROUTINE
+## OTHER FUNCTIONS
 ###############################################################################
-
-## COMMAND LINE
-
+	
 def usage():
 	return """
 Usage:
@@ -90,95 +76,114 @@ Options:
 	
 """
 
-quiet = 0
-
-argc = len(sys.argv)
-if argc > 1:
-	i = 1
-	while i < argc:
-		if sys.argv[i] in ("-h", "--help"):
-			sys.stdout.write(usage())
-			sys.stdout.flush()
-			sys.exit(0)
-		elif sys.argv[i] in ("-q", "--quiet", "--boo"):
-			quiet = 1
-		else:
-			sys.stdout.write(usage())
-			sys.stdout.write("Unknown option: %s\n" % sys.argv[i])
-			sys.stdout.flush()
-			sys.exit(1)
-		i = i + 1
-
-## MAIN
+###############################################################################
+## MAIN ROUTINE
+###############################################################################
 
 # TODO: Single instance support
 
-# nVidia driver throttles min speed to 30
-FANSPEED_MIN = 30
-FANSPEED_MAX = 90
-FANSPEED_DELTA = FANSPEED_MAX - FANSPEED_MIN
-TEMPERATURE_MIN = 60
-TEMPERATURE_MAX = 90
-TEMPERATURE_DELTA = TEMPERATURE_MAX - TEMPERATURE_MIN
-
-# For safety, assume we're overheating
-temperature = 100
-fanspeed = 100
-
-MAX_ATTEMPTS = 3
-attempts = 0
-
-firstrun = 1
-
-if quiet:
-	sys.stdout.write("Running in quiet mode; supressing temperature readouts\n")
-	sys.stdout.flush()
-
-while True:
-	sys.stdout.flush()
-	sys.stderr.flush()
-	
-	if (attempts > MAX_ATTEMPTS):
-		sys.stderr.write("GPU fan control appears to be dead, giving up.\n")
+def main():
+	def onSIGTERM(signum, frame):
+		sys.stdout.write("Recieved SIGTERM, exiting...\n")
 		sys.stdout.flush()
 		sys.stderr.flush()
-		sys.exit(1)
-	
-	if not firstrun:
-		time.sleep(5)
-	else:
-		firstrun = 0
-	attempts = attempts + 1
-	
-	try:
-		temp = getTemperature()
-	except:
-		sys.stderr.write("Failed to get temperature value, attempt %i of %i\n" % (attempts, MAX_ATTEMPTS))
-		continue
+		# FIXME: This should signal the main thread to exit
+		sys.exit(0)
 
-	## What should we set the fanspeed to?
-	if temp < TEMPERATURE_MIN:
-		fanspeed = FANSPEED_MIN
-	elif temp > TEMPERATURE_MAX:
-		fanspeed = FANSPEED_MAX
-	else:
-		fanspeed = round((FANSPEED_MIN + (FANSPEED_DELTA *(temp - TEMPERATURE_MIN) / TEMPERATURE_DELTA)))
+	signal.signal(signal.SIGTERM, onSIGTERM)
 
-	## Attempt to enable GPU Fan Control
-	try:
-		if not getGPUFanControlEnabled():
-			enableGPUFanControl()
-	except:
-		sys.stderr.write("Failed to set GPU fan control state, attempt %i of %i\n" % (attempts, MAX_ATTEMPTS))
-		continue
-	
-	## Set new fanspeed
-	if setGPUFanSpeed(fanspeed) != 0:
-		sys.stdout.write("Failed to set temperature value, attempt %i of %i\n" % (attempts, MAX_ATTEMPTS))
-		continue
-	
-	## We were successful. Reset the attempt count
-	if not quiet:
-		sys.stdout.write("Temp: %i -> Fan Speed: %i\n" % (temp, fanspeed))
+	# nVidia driver throttles min speed to 30
+	FANSPEED_MIN = 30
+	FANSPEED_MAX = 90
+	FANSPEED_DELTA = FANSPEED_MAX - FANSPEED_MIN
+	TEMPERATURE_MIN = 60
+	TEMPERATURE_MAX = 90
+	TEMPERATURE_DELTA = TEMPERATURE_MAX - TEMPERATURE_MIN
+
+	# For safety, assume we're overheating
+	temperature = 100
+	fanspeed = 100
+
+	MAX_ATTEMPTS = 3
 	attempts = 0
+
+	firstrun = 1
+	
+	quiet = 0
+
+	argc = len(sys.argv)
+	if argc > 1:
+		i = 1
+		while i < argc:
+			if sys.argv[i] in ("-h", "--help"):
+				sys.stdout.write(usage())
+				sys.stdout.flush()
+				return 0
+			elif sys.argv[i] in ("-q", "--quiet"):
+				quiet = 1
+			else:
+				sys.stdout.write(usage())
+				sys.stdout.write("Unknown option: %s\n" % sys.argv[i])
+				sys.stdout.flush()
+				return 1
+			i = i + 1
+			
+	if not os.geteuid() == 0:
+		sys.exit("You need to be root to run this script\n")
+
+	if quiet:
+		sys.stdout.write("Running in quiet mode; supressing temperature readouts\n")
+		sys.stdout.flush()
+
+	while True:
+		sys.stdout.flush()
+		sys.stderr.flush()
+	
+		if (attempts > MAX_ATTEMPTS):
+			sys.stderr.write("GPU fan control appears to be dead, giving up.\n")
+			sys.stdout.flush()
+			sys.stderr.flush()
+			return 1
+	
+		if not firstrun:
+			time.sleep(5)
+		else:
+			firstrun = 0
+		attempts = attempts + 1
+	
+		try:
+			temp = getTemperature()
+		except:
+			sys.stderr.write("Failed to get temperature value, attempt %i of %i\n" % (attempts, MAX_ATTEMPTS))
+			continue
+
+		## What should we set the fanspeed to?
+		if temp < TEMPERATURE_MIN:
+			fanspeed = FANSPEED_MIN
+		elif temp > TEMPERATURE_MAX:
+			fanspeed = FANSPEED_MAX
+		else:
+			fanspeed = round((FANSPEED_MIN + (FANSPEED_DELTA *(temp - TEMPERATURE_MIN) / TEMPERATURE_DELTA)))
+
+		## Attempt to enable GPU Fan Control
+		try:
+			if not getGPUFanControlEnabled():
+				enableGPUFanControl()
+		except:
+			sys.stderr.write("Failed to set GPU fan control state, attempt %i of %i\n" % (attempts, MAX_ATTEMPTS))
+			continue
+	
+		## Set new fanspeed
+		if setGPUFanSpeed(fanspeed) != 0:
+			sys.stdout.write("Failed to set temperature value, attempt %i of %i\n" % (attempts, MAX_ATTEMPTS))
+			continue
+	
+		## We were successful. Reset the attempt count
+		if not quiet:
+			sys.stdout.write("Temp: %i -> Fan Speed: %i\n" % (temp, fanspeed))
+		attempts = 0
+	return 0
+	
+if __name__ == "__main__":
+    sys.exit(main())
 	
