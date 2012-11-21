@@ -69,6 +69,40 @@ def getTemperature():
 ## MAIN ROUTINE
 ###############################################################################
 
+## COMMAND LINE
+
+def usage():
+	return """
+Usage:
+	nvfanx [OPTION]
+
+Options:
+	-h, --help		Show this help
+	-q, --quiet		Silence debug messages
+	
+"""
+
+quiet = 0
+
+argc = len(sys.argv)
+if argc > 1:
+	i = 1
+	while i < argc:
+		if sys.argv[i] in ("-h", "--help"):
+			sys.stdout.write(usage())
+			sys.stdout.flush()
+			sys.exit(0)
+		elif sys.argv[i] in ("-q", "--quiet", "--boo"):
+			quiet = 1
+		else:
+			sys.stdout.write(usage())
+			sys.stdout.write("Unknown option: %s\n" % sys.argv[i])
+			sys.stdout.flush()
+			sys.exit(1)
+		i = i + 1
+
+## MAIN
+
 # TODO: Single instance support
 
 # nVidia driver throttles min speed to 30
@@ -87,6 +121,10 @@ MAX_ATTEMPTS = 3
 attempts = 0
 
 firstrun = 1
+
+if quiet:
+	sys.stdout.write("Running in quiet mode; supressing temperature readouts\n")
+	sys.stdout.flush()
 
 while True:
 	sys.stdout.flush()
@@ -133,6 +171,7 @@ while True:
 		continue
 	
 	## We were successful. Reset the attempt count
-	sys.stdout.write("Temp: %i -> Fan Speed: %i\n" % (temp, fanspeed))
+	if not quiet:
+		sys.stdout.write("Temp: %i -> Fan Speed: %i\n" % (temp, fanspeed))
 	attempts = 0
 	

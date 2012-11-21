@@ -17,7 +17,9 @@ restarts (on systems with graphical login managers, for example).
 This script uses the subprocess module and therefore requires Python 3 to run.
 
 A systemd service is included, allowing systemd users to automatically start
-the script on a graphical boot.
+the script on a graphical boot. "--quiet" is passed as an option by default to
+suppress temperature and fanspeed readouts, which lessens the amount of
+messages dumped to the system logs.
 
 nouveau users should use nvclock instead, which does not depend on an X
 session.

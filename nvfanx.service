@@ -4,7 +4,7 @@ After=display-manager.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/nvfanx
+ExecStart=/usr/local/bin/nvfanx --quiet
 Restart=always
 RestartSec=5s
 
