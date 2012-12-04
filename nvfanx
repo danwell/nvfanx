@@ -27,8 +27,8 @@ import signal
 ## GPU FAN CONTROL GET/SET FUNCTIONS
 ###############################################################################
 
-def getGPUFanControlEnabled():
-	nvproc = subprocess.Popen(("nvidia-settings", "--ctrl-display", ":0", "-q", "[gpu:0]/GPUFanControlState", "-t"),stdout=subprocess.PIPE)
+def getGPUFanControlEnabled(display):
+	nvproc = subprocess.Popen(("nvidia-settings", "--ctrl-display", display, "-q", "[gpu:0]/GPUFanControlState", "-t"),stdout=subprocess.PIPE)
 	output = nvproc.stdout.readline()
 	nvproc.wait()
 	if nvproc.returncode != 0:
@@ -36,14 +36,14 @@ def getGPUFanControlEnabled():
 	isEnabled = int(output)
 	return isEnabled
 
-def enableGPUFanControl():
-	nvproc = subprocess.Popen(("nvidia-settings", "--ctrl-display", ":0", "-a", "[gpu:0]/GPUFanControlState=1"))
+def enableGPUFanControl(display):
+	nvproc = subprocess.Popen(("nvidia-settings", "--ctrl-display", display, "-a", "[gpu:0]/GPUFanControlState=1"))
 	nvproc.wait()
 	return nvproc.returncode == 0
 
 ## TODO: Add multi-GPU support
-def getTemperature():
-	nvproc = subprocess.Popen(("nvidia-settings", "--ctrl-display", ":0", "-q", "[gpu:0]/GPUCoreTemp", "-t"),stdout=subprocess.PIPE)
+def getTemperature(display):
+	nvproc = subprocess.Popen(("nvidia-settings", "--ctrl-display", display, "-q", "[gpu:0]/GPUCoreTemp", "-t"),stdout=subprocess.PIPE)
 	
 	line = nvproc.stdout.readline()
 
@@ -54,10 +54,10 @@ def getTemperature():
 	return temp
 
 ## Returns nvidia-settings return code - non-zero indicates failure
-def setGPUFanSpeed(fanspeed):
+def setGPUFanSpeed(display,fanspeed):
 	if fanspeed > 100 or fanspeed < 0:
 		raise Exception('Invalid fanspeed: %i' % fanspeed)
-	nvproc = subprocess.Popen(("nvidia-settings", "--ctrl-display", ":0", "-a", "[fan:0]/GPUCurrentFanSpeed=" + str(fanspeed)),stdout=subprocess.PIPE)
+	nvproc = subprocess.Popen(("nvidia-settings", "--ctrl-display", display, "-a", "[fan:0]/GPUCurrentFanSpeed=" + str(fanspeed)),stdout=subprocess.PIPE)
 	nvproc.wait()
 	return nvproc.returncode
 	
@@ -68,14 +68,73 @@ def setGPUFanSpeed(fanspeed):
 def usage():
 	return """
 Usage:
-	nvfanx [OPTION]
+	nvfanx [OPTION] [-r|--rate SECONDS]
 
 Options:
 	-h, --help		Show this help
 	-q, --quiet		Silence debug messages
+	-r, --rate [SECONDS]	Update rate in seconds
 	
 """
 
+def parseCommandLine(argv):
+	## FIXME: This needs a bit of cleanup; this shouldn't print anything.
+
+	parameters = {
+		"quiet":	0,
+		"checkrate":	10,
+		"help":		0,
+		"invalid":	0,
+		}
+		
+	argc = len(argv)
+	if argc > 1:
+		i = 1
+		currentParameter = ""
+		while i < argc:
+			#sys.stdout.write("Param[%i]: %s\n" % (i, currentParameter))
+			#sys.stdout.write(" Argv[%i]: %s\n" % (i, argv[i]))
+			if currentParameter == "":
+				if argv[i] in ("-h", "--help"):
+					parameters["help"] = 1
+					return parameters
+				elif argv[i] in ("-q", "--quiet"):
+					parameters["quiet"] = 1
+				elif argv[i] in ("-r", "--rate"):
+					currentParameter = "checkrate"
+				else:
+					sys.stdout.write(usage())
+					sys.stderr.write("Unknown option at %i: %s\n" % (i, argv[i]))
+					sys.stdout.flush()
+					sys.stderr.flush()
+					parameters["invalid"] = i
+					return parameters
+			elif currentParameter == "checkrate":
+				try:
+					parameters["checkrate"] = int(argv[i])
+					currentParameter = ""
+				except:
+					parameters["invalid"] = i
+					sys.stderr.write("Error: Invalid update rate\n")
+					return parameters
+			else:
+				raise Exception('Unknown parameter parsing rule: %s\n' % currentParameter)
+			i = i + 1
+	
+		# If we're branching into here, the user has forgotten to supply
+		# a value for a parameter which requires it
+		if currentParameter == "checkrate":
+			parameters["invalid"] = i
+			sys.stderr.write("Error: Expected update rate in seconds\n")
+			sys.stderr.flush()
+	
+	return parameters
+	
+def onSIGNAL(signum, frame):
+	global shouldTerminate
+	sys.stdout.write("Recieved signal %i\n" % signum)
+	shouldTerminate = True
+			
 ###############################################################################
 ## MAIN ROUTINE
 ###############################################################################
@@ -83,14 +142,21 @@ Options:
 # TODO: Single instance support
 
 def main():
-	def onSIGTERM(signum, frame):
-		sys.stdout.write("Recieved SIGTERM, exiting...\n")
-		sys.stdout.flush()
-		sys.stderr.flush()
-		# FIXME: This should signal the main thread to exit
-		sys.exit(0)
+	global shouldTerminate
+	shouldTerminate = False
 
-	signal.signal(signal.SIGTERM, onSIGTERM)
+	signal.signal(signal.SIGTERM, onSIGNAL)
+	signal.signal(signal.SIGINT, onSIGNAL)
+	
+	display = ":0"
+	
+	parameters = parseCommandLine(sys.argv)
+	if parameters["invalid"]:
+		sys.exit(1)
+	if parameters["help"]:
+		sys.stdout.write(usage())
+		sys.stdout.flush()
+		sys.exit(0)
 
 	# nVidia driver throttles min speed to 30
 	FANSPEED_MIN = 30
@@ -108,34 +174,15 @@ def main():
 	attempts = 0
 
 	firstrun = 1
-	
-	quiet = 0
-
-	argc = len(sys.argv)
-	if argc > 1:
-		i = 1
-		while i < argc:
-			if sys.argv[i] in ("-h", "--help"):
-				sys.stdout.write(usage())
-				sys.stdout.flush()
-				return 0
-			elif sys.argv[i] in ("-q", "--quiet"):
-				quiet = 1
-			else:
-				sys.stdout.write(usage())
-				sys.stdout.write("Unknown option: %s\n" % sys.argv[i])
-				sys.stdout.flush()
-				return 1
-			i = i + 1
 			
 	if not os.geteuid() == 0:
 		sys.exit("You need to be root to run this script\n")
 
-	if quiet:
+	if parameters["quiet"]:
 		sys.stdout.write("Running in quiet mode; supressing temperature readouts\n")
-		sys.stdout.flush()
+	sys.stdout.write("Using checking interval of %i seconds\n" % parameters["checkrate"])
 
-	while True:
+	while not shouldTerminate:
 		sys.stdout.flush()
 		sys.stderr.flush()
 	
@@ -146,13 +193,13 @@ def main():
 			return 1
 	
 		if not firstrun:
-			time.sleep(5)
+			time.sleep(parameters["checkrate"])
 		else:
 			firstrun = 0
 		attempts = attempts + 1
 	
 		try:
-			temp = getTemperature()
+			temp = getTemperature(display)
 		except:
 			sys.stderr.write("Failed to get temperature value, attempt %i of %i\n" % (attempts, MAX_ATTEMPTS))
 			continue
@@ -167,21 +214,23 @@ def main():
 
 		## Attempt to enable GPU Fan Control
 		try:
-			if not getGPUFanControlEnabled():
-				enableGPUFanControl()
+			if not getGPUFanControlEnabled(display):
+				enableGPUFanControl(display)
 		except:
 			sys.stderr.write("Failed to set GPU fan control state, attempt %i of %i\n" % (attempts, MAX_ATTEMPTS))
 			continue
 	
 		## Set new fanspeed
-		if setGPUFanSpeed(fanspeed) != 0:
+		if setGPUFanSpeed(display,fanspeed) != 0:
 			sys.stdout.write("Failed to set temperature value, attempt %i of %i\n" % (attempts, MAX_ATTEMPTS))
 			continue
 	
 		## We were successful. Reset the attempt count
-		if not quiet:
+		if not parameters["quiet"]:
 			sys.stdout.write("Temp: %i -> Fan Speed: %i\n" % (temp, fanspeed))
 		attempts = 0
+		
+	sys.stdout.write("Exiting\n")
 	return 0
 	
 if __name__ == "__main__":
